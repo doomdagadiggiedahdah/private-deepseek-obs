@@ -5,11 +5,14 @@
   let adminSection: Writable<string> = getContext("adminSection")
   adminSection.set("api-keys")
 
+  let { data } = $props()
+
   let showCreateModal = $state(false)
   let newKeyName = $state("")
   let loading = $state(false)
   let createdKey = $state<string | null>(null)
   let showSuccess = $state(false)
+  let errorMessage = $state<string | null>(null)
 
   interface ApiKey {
     id: string
@@ -41,6 +44,7 @@
     newKeyName = ""
     createdKey = null
     showSuccess = false
+    errorMessage = null
   }
 
   function closeModal() {
@@ -48,27 +52,46 @@
     newKeyName = ""
     createdKey = null
     showSuccess = false
+    errorMessage = null
   }
 
   async function createApiKey() {
     if (!newKeyName.trim()) return
     
     loading = true
+    errorMessage = null
     
-    await new Promise(resolve => setTimeout(resolve, 1000))
-    
-    const newKey = {
-      id: Date.now().toString(),
-      name: newKeyName.trim(),
-      keyPrefix: `api_${Math.random().toString(36).substring(2, 5)}...${Math.random().toString(36).substring(2, 8)}`,
-      created: new Date().toISOString().split('T')[0],
-      status: "Active" as const
+    try {
+      const { data: result, error } = await data.supabase.functions.invoke('create-api-key', {
+        body: { name: newKeyName.trim() }
+      })
+      
+      if (error) {
+        throw error
+      }
+      
+      if (result?.success && result?.apiKey) {
+        // Add the new key to our local list
+        const newKey = {
+          id: result.apiKey.id || Date.now().toString(),
+          name: result.apiKey.name,
+          keyPrefix: `${result.apiKey.api_key_value.substring(0, 7)}...${result.apiKey.api_key_value.substring(-6)}`,
+          created: result.apiKey.created_at ? new Date(result.apiKey.created_at).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+          status: result.apiKey.is_active ? "Active" : "Inactive" as const
+        }
+        
+        apiKeys = [...apiKeys, newKey]
+        createdKey = result.apiKey.api_key_value
+        showSuccess = true
+      } else {
+        throw new Error(result?.error || 'Invalid response from server')
+      }
+    } catch (err) {
+      console.error('Error creating API key:', err)
+      errorMessage = err instanceof Error ? err.message : 'Failed to create API key. Please try again.'
+    } finally {
+      loading = false
     }
-    
-    apiKeys = [...apiKeys, newKey]
-    createdKey = `api_${Math.random().toString(36).substring(2, 32)}`
-    showSuccess = true
-    loading = false
   }
 
   function copyToClipboard(text: string) {
@@ -180,6 +203,15 @@
           />
         </div>
 
+        {#if errorMessage}
+          <div class="alert alert-error mb-4">
+            <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span>{errorMessage}</span>
+          </div>
+        {/if}
+
         <div class="modal-action">
           <button class="btn" onclick={closeModal} disabled={loading}>Cancel</button>
           <button 
@@ -206,11 +238,12 @@
         </div>
 
         <div class="form-control mb-4">
-          <label class="label">
+          <label class="label" for="createdApiKey">
             <span class="label-text font-semibold">Your new API key:</span>
           </label>
           <div class="input-group">
             <input 
+              id="createdApiKey"
               type="text" 
               class="input input-bordered flex-1 font-mono text-sm" 
               value={createdKey}
@@ -221,7 +254,7 @@
               onclick={() => copyToClipboard(createdKey || "")}
             >
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
               </svg>
               Copy
             </button>
@@ -233,6 +266,6 @@
         </div>
       {/if}
     </div>
-    <div class="modal-backdrop" onclick={closeModal}></div>
+    <button class="modal-backdrop" onclick={closeModal} onkeydown={(e) => e.key === 'Enter' && closeModal()} aria-label="Close modal"></button>
   </div>
 {/if}
